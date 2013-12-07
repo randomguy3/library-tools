@@ -1,0 +1,222 @@
+#!/usr/bin/env python
+#
+# Copyright 2013  Alex Merry <dev@randomguy3.me.uk>
+#
+# Permission to use, copy, modify, and distribute this software
+# and its documentation for any purpose and without fee is hereby
+# granted, provided that the above copyright notice appear in all
+# copies and that both that the copyright notice and this
+# permission notice and warranty disclaimer appear in supporting
+# documentation, and that the name of the author not be used in
+# advertising or publicity pertaining to distribution of the
+# software without specific, written prior permission.
+#
+# The author disclaim all warranties with regard to this
+# software, including all implied warranties of merchantability
+# and fitness.  In no event shall the author be liable for any
+# special, indirect or consequential damages or any damages
+# whatsoever resulting from loss of use, data or profits, whether
+# in an action of contract, negligence or other tortious action,
+# arising out of or in connection with the use or performance of
+# this software.
+
+import libutils
+import os.path
+import readline
+import stdnum.isbn
+
+from argparse import ArgumentParser
+
+arg_location = None
+
+class GiveUpOnEntry(Exception):
+    pass
+
+class ExitApp(Exception):
+    pass
+
+def ask_yes_no(question, def_ans = False):
+    if def_ans:
+        code = "[Y/n]"
+    else:
+        code = "[y/N]"
+    msg = question + " " + code + ": "
+    resp = None
+    while resp != '' and resp != 'y' and resp != 'n':
+        resp = input(msg).lower()
+    if resp == 'y':
+        return True
+    elif resp == 'n':
+        return False
+    else:
+        return def_ans
+
+def ask_yes_no_quit(question, def_ans = False):
+    if def_ans:
+        code = "[Y/n/q]"
+    else:
+        code = "[y/N/q]"
+    msg = question + " " + code + ": "
+    resp = None
+    while resp != '' and resp != 'y' and resp != 'n' and resp != 'q':
+        resp = input(msg).lower()
+    if resp == 'y':
+        return True
+    elif resp == 'n':
+        return False
+    elif resp == 'q':
+        raise ExitApp()
+    else:
+        return def_ans
+
+def ask_from_list(prompt, opts):
+    """
+    Ask for one of a constrained list of options.
+
+    These should all be lowercase.
+    """
+    msg = prompt + " [" + "/".join(opts) + "]: "
+    resp = None
+    while not (resp in opts):
+        resp = input(msg).lower()
+    return resp
+
+def lookup_isbn(isbn):
+    try:
+        results = libutils.lookup_isbn(isbn)
+        if len(results) > 1:
+            print("Multiple results were found:")
+            i = 0
+            opts = []
+            for r in results:
+                i += 1
+                print("  {0}: {1} by {2}".format(i, r.title, r.author))
+                opts.append(str(i))
+            opts.append('n')
+            cr = ask_from_list("Which book is correct ('n' for none)?",
+                               opts)
+            if (cr == 'n'):
+                return None
+            else:
+                i = int(cr) - 1
+                return results[i]
+        elif len(results) == 1:
+            r = results[0]
+            print("Found book: {0} by {1}".format(r.title, r.author))
+            if ask_yes_no("Is this correct?", True):
+                return r
+            else:
+                return None
+        else:
+            print("Nothing found for ISBN " + isbn)
+            return None
+    except libutils.LookupError as e:
+        print(e.strerror)
+        #print(result)
+        #__import__('traceback').print_exc()
+        return None
+
+def ask(prompt, def_val=None):
+    val = input("{0} [{1}]: ".format(prompt, def_val or ''))
+    if val == '':
+        return def_val
+    else:
+        return val
+
+argparser = ArgumentParser(description='Add entries to a library catalogue.')
+argparser.add_argument('file', metavar='file', help='the CSV library catalogue file')
+argparser.add_argument('--location', '-l', help='the location of all entries')
+args = argparser.parse_args()
+
+arg_location = args.location
+
+try:
+    if os.path.exists(args.file):
+        mode = 'r+'
+    else:
+        mode = 'a'
+    with libutils.Library.open(args.file, mode=mode) as library:
+        while True:
+            try:
+                isbn = input("Enter ISBN: ")
+
+                if isbn == '':
+                    isbn = None
+                    book = None
+                elif stdnum.isbn.is_valid(isbn):
+                    if library.contains_isbn(isbn):
+                        if not ask_yes_no("Book already exists in library. Continue?",False):
+                            raise GiveUpOnEntry()
+                    book = lookup_isbn(isbn)
+                else:
+                    print(isbn + " is not a valid ISBN")
+                    continue
+
+                if not book:
+                    book = libutils.Book(isbn)
+                    book.author = input("Author: ")
+                    book.title = input("Title: ")
+                    if book.author != '' or book.title != '':
+                        book.publisher = input("Publisher: ")
+                        book.comments = input("Comments: ")
+                else:
+                    if not book.author:
+                        book.author = input("Author: ")
+                    if not book.title:
+                        book.title = input("Title: ")
+                    if not book.publisher:
+                        book.publisher = input("Publisher: ")
+                    book.comments = input("Comments: ")
+
+                if book.author == '' and book.title == '':
+                    if ask_yes_no("Do you want to exit?", False):
+                        raise ExitApp()
+                    continue
+
+                book.read = ask_yes_no("Read?",True)
+                if book.anthology is None:
+                    book.anthology = ask_yes_no("Anthology?",False)
+                if book.series is None:
+                    book.series = input("Series: ")
+                if arg_location is None:
+                    book.location = input("Location: ")
+                else:
+                    book.location = arg_location
+
+                while True:
+                    print("The final book record is:")
+                    print("  Author:       " + (book.author or ''))
+                    print("  Title:        " + (book.title or ''))
+                    print("  Publisher:    " + (book.publisher or ''))
+                    print("  Comments:     " + (book.comments or ''))
+                    print("  Read:         " + ((book.read and "yes") or "no"))
+                    print("  Anthology:    " + ((book.anthology and "yes") or "no"))
+                    print("  Series:       " + (book.series or ''))
+                    print("  Location:     " + (book.location or ''))
+                    if ask_yes_no("Is this correct?",True):
+                        break;
+                    if ask_yes_no_quit("Start over?",False):
+                        raise GiveUpOnEntry()
+                    book.author = ask("Author", book.author)
+                    book.title = ask("Title", book.title)
+                    book.publisher = ask("Publisher", book.publisher)
+                    book.comments = ask("Comments", book.comments)
+                    book.read = ask_yes_no("Read?",book.read)
+                    book.anthology = ask_yes_no("Anthology?",book.anthology)
+                    book.series = ask("Series", book.series)
+                    book.location = ask("Location", book.location)
+
+                if isbn is None and book in library:
+                    if not ask_yes_no("Book already exists in library. Add anyway?",False):
+                        raise GiveUpOnEntry()
+                library.addbook(book)
+                library.commit()
+            except GiveUpOnEntry:
+                continue
+
+except EOFError:
+    pass
+except ExitApp:
+    pass
+
+

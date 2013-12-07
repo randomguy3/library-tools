@@ -1,0 +1,157 @@
+#!/usr/bin/env python
+#
+# Copyright 2013  Alex Merry <dev@randomguy3.me.uk>
+#
+# Permission to use, copy, modify, and distribute this software
+# and its documentation for any purpose and without fee is hereby
+# granted, provided that the above copyright notice appear in all
+# copies and that both that the copyright notice and this
+# permission notice and warranty disclaimer appear in supporting
+# documentation, and that the name of the author not be used in
+# advertising or publicity pertaining to distribution of the
+# software without specific, written prior permission.
+#
+# The author disclaim all warranties with regard to this
+# software, including all implied warranties of merchantability
+# and fitness.  In no event shall the author be liable for any
+# special, indirect or consequential damages or any damages
+# whatsoever resulting from loss of use, data or profits, whether
+# in an action of contract, negligence or other tortious action,
+# arising out of or in connection with the use or performance of
+# this software.
+
+import csv
+import markup
+import os.path
+
+from argparse import ArgumentParser
+
+import csv, codecs, libutils
+
+argparser = ArgumentParser(description='Produce a HTML table of a library catalogue.')
+argparser.add_argument('catalogue', metavar='catalogue', help='the CSV library catalogue file')
+argparser.add_argument('output', metavar='output', help='the HTML output file')
+argparser.add_argument('--title', '-t', help='title of the page',
+                       default='Library catalogue')
+argparser.add_argument('--css', '-c', help='css file (can be repeated)',
+                       action='append')
+argparser.add_argument('--force', '-f', help='overwrite existing files',
+                       action='store_true', default=False)
+argparser.add_argument('--location-map', '-l', action='append', nargs=2,
+                       metavar=('FROM','TO'),
+                       help='rewrite location name')
+argparser.add_argument('--default-location-name', '-L', action='store',
+                       metavar='LOCATION',
+                       help='rewrite any location name that doesn\'t have '
+                            'an explicit map to LOCATION')
+args = argparser.parse_args()
+
+if not args.force and os.path.exists(args.output):
+    print("File \"" + args.output + "\" exists")
+    exit(1)
+
+if not os.path.exists(args.catalogue):
+    print("File \"" + args.catalogue + "\" does not exist")
+    exit(1)
+
+if args.location_map or args.default_location_name:
+    locations_map = libutils.LocationMapper(default=args.default_location_name)
+    for l in (args.location_map or []):
+        locations_map[l[0]] = l[1]
+else:
+    locations_map = libutils.LocationMapper.defaultmapper()
+
+library = libutils.Library(filename=args.catalogue)
+
+
+
+def write_row(book, page):
+    loc = locations_map[book.location]
+    loc_class = 'loc-' + loc.lower().replace(' ', '-')
+    page.tr(class_=loc_class)
+    authors = book.author.split(' and ')
+    page.td(', '.join([' '.join(a.split(', ')[::-1]) for a in authors]))
+    page.td(book.title)
+    page.td(loc)
+    page.tr.close()
+
+page = markup.page()
+page.init( title = args.title,
+           css = args.css,
+           doctype = markup.doctype.strict,
+           charset = 'UTF-8' )
+page.script(type='text/javascript')
+page.addcontent('''
+function hidebooks() {
+    els = document.getElementsByClassName('loc-elsewhere');
+    for (i = 0; i < els.length; ++i) {
+        els[i].style.display = 'none';
+    }
+    document.getElementById('hide-para').style.display = 'none';
+    document.getElementById('show-para').style.display = null;
+}
+function showbooks() {
+    els = document.getElementsByClassName('loc-elsewhere');
+    for (i = 0; i < els.length; ++i) {
+        els[i].style.display = null;
+    }
+    document.getElementById('hide-para').style.display = null;
+    document.getElementById('show-para').style.display = 'none';
+}
+''')
+page.script.close()
+page.h1(args.title)
+page.p()
+page.a('Back to index', href='index.html')
+page.p.close()
+page.p('Let me know if you want to borrow any of these.')
+if len(library.anthologies) > 0:
+    page.p('Note that &#8220;anthology&#8221; refers to any collected '
+           'work by more than one author (the editor is listed in place '
+           'of an author).')
+page.p('Imladris is where I live, so books that are there should be easy to '
+       'loan to you. Anything that says &#8220;Elsewhere&#8221; is the other '
+       'side of the country.')
+page.p(id='hide-para')
+page.a('Hide &#8220;elsewhere&#8221; books',
+       href='#',
+       onclick='hidebooks();return false')
+page.p.close()
+page.p(id='show-para', style='display:none')
+page.a('Show &#8220;elsewhere&#8221; books',
+       href='#',
+       onclick='showbooks();return false')
+page.p.close()
+page.table()
+page.thead()
+page.tr()
+page.th('Author(s)')
+page.th('Title')
+page.th('Location')
+page.tr.close()
+page.thead.close()
+page.tbody()
+for book in library.books:
+    write_row(book, page)
+page.tbody.close()
+if len(library.anthologies) > 0:
+    page.thead()
+    page.tr()
+    page.th('Anthologies', colspan=3)
+    page.tr.close()
+    page.tr()
+    page.th('Editor(s)')
+    page.th('Title')
+    page.th('Location')
+    page.tr.close()
+    page.thead.close()
+    page.tbody()
+    for book in library.anthologies:
+        write_row(book, page)
+    page.tbody.close()
+page.table.close()
+
+with open(args.output, 'w', encoding='utf-8') as outfile:
+    outfile.write(str(page))
+
+
